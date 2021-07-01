@@ -1,72 +1,58 @@
 package argv
 
 import (
-	"errors"
 	"io"
 	"os"
 	"os/exec"
 )
 
-func Cmds(args ...[]string) ([]*exec.Cmd, error) {
-	var cmds []*exec.Cmd
+type Commands []*exec.Cmd
+
+func NewCommands(args ...[]string) (cmds Commands) {
 	for _, argv := range args {
 		if len(argv) == 0 {
-			return nil, errors.New("invalid cmd")
+			continue
 		}
-
 		cmds = append(cmds, exec.Command(argv[0], argv[1:]...))
 	}
-	return cmds, nil
+	for i := range cmds {
+		if i == 0 {
+			continue
+		}
+		cmds[i].Stdin, _ = cmds[i-1].StdoutPipe()
+	}
+	return
 }
 
-func Start(stdin io.Reader, stdout, stderr io.Writer, cmds ...*exec.Cmd) error {
-	if stdin == nil {
-		stdin = os.Stdin
-	}
-	if stdout == nil {
-		stdout = os.Stdout
-	}
-	if stderr == nil {
-		stderr = os.Stderr
-	}
-	l := len(cmds)
-	if l == 0 {
-		return nil
-	}
-	var err error
-	for i := 0; i < l; i++ {
-		if i == 0 {
-			cmds[i].Stdin = stdin
-		} else {
-			cmds[i].Stdin, err = cmds[i-1].StdoutPipe()
-			if stderr != nil {
-				break
-			}
-		}
-		cmds[i].Stderr = stderr
-		if i == l-1 {
-			cmds[i].Stdout = stdout
-		}
-	}
-	if err != nil {
-		return err
-	}
+func (cmds Commands) Std() Commands {
+	return cmds.In(os.Stdin).Out(os.Stdout).Err(os.Stderr)
+}
+
+func (cmds Commands) In(stdin io.Reader) Commands {
+	cmds[0].Stdin = stdin
+	return cmds
+}
+
+func (cmds Commands) Out(stdout io.Writer) Commands {
+	cmds[len(cmds)-1].Stdout = stdout
+	return cmds
+}
+
+func (cmds Commands) Err(stderr io.Writer) Commands {
 	for i := range cmds {
-		err = cmds[i].Start()
-		if err != nil {
+		cmds[i].Stderr = stderr
+	}
+	return cmds
+}
+
+func (cmds Commands) Run() error {
+	for i := len(cmds) - 1; i > -1; i-- {
+		if err := cmds[i].Start(); err != nil {
 			return err
 		}
 	}
-	return nil
-}
-func Pipe(stdin io.Reader, stdout, stderr io.Writer, cmds ...*exec.Cmd) error {
-	err := Start(stdin, stdout, stderr, cmds...)
-	if err != nil {
-		return err
-	}
 	for i := range cmds {
-		err = cmds[i].Wait()
-		if err != nil {
+		if err := cmds[i].Wait(); err != nil {
 			return err
 		}
 	}
